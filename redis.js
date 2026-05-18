@@ -1,58 +1,55 @@
 const redis = require('redis');
 
-let redisClient = null;
-let connectionPromise = null;
+let client = null;
+let clientPromise = null; // To store the promise of the client connection
 
 /**
- * Initializes and connects the Redis client, ensuring it's only done once.
- * @returns {Promise<import('redis').RedisClientType>} A promise that resolves with the connected Redis client.
+ * Initializes and returns a connected Redis client instance.
+ * Ensures a singleton client and handles connection retries/errors gracefully.
+ * @returns {Promise<import('redis').RedisClientType>}
  */
-async function initializeAndConnectRedis() {
-    if (redisClient && redisClient.isReady) {
-        return redisClient; // Client is already connected and ready
+async function getRedisClient() {
+    // If client is already connected and ready, return it immediately.
+    if (client && client.isReady) {
+        return client;
     }
 
-    if (connectionPromise) {
-        return connectionPromise; // Return the existing connection promise
+    // If a connection attempt is already in progress, return that promise.
+    if (clientPromise) {
+        return clientPromise;
     }
 
-    connectionPromise = (async () => {
+    // Otherwise, initiate a new connection attempt.
+    clientPromise = (async () => {
         try {
-            // Retrieve Redis URL from environment or default to localhost
-            const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-
-            // Create the Redis client instance
-            redisClient = redis.createClient({ url: REDIS_URL });
-
-            // Set up error handling for the client
-            redisClient.on('error', (err) => {
-                console.error('Aether-Shield Redis Client Error:', err);
-                // Depending on policy, you might want to trigger a re-initialization or graceful shutdown
+            console.log('Attempting to connect to Redis...');
+            const newClient = redis.createClient({
+                url: process.env.REDIS_URL || 'redis://localhost:6379' // Use environment variables for production
             });
 
-            // Connect to Redis
-            await redisClient.connect();
-            console.log('Aether-Shield: Redis client connected successfully!');
+            newClient.on('error', (err) => {
+                console.error('Redis Client Error:', err);
+                // On error, reset client and promise to allow re-initialization on next request
+                client = null;
+                clientPromise = null;
+                // Optionally, implement more sophisticated error handling like exponential backoff reconnects
+            });
 
-            return redisClient;
+            await newClient.connect();
+            console.log('Redis client connected successfully.');
+            client = newClient; // Store the successfully connected client
+            clientPromise = null; // Clear the promise as connection is established
+            return client;
         } catch (error) {
-            console.error('Aether-Shield: Failed to connect to Redis:', error.message);
-            // In case of connection failure, nullify the client and reset promise to allow retries
-            redisClient = null;
-            connectionPromise = null;
-            throw error; // Propagate the error to the caller
+            console.error('Failed to connect to Redis:', error);
+            // On failure, reset client and promise
+            client = null;
+            clientPromise = null;
+            throw error; // Propagate the connection error
         }
     })();
 
-    return connectionPromise;
+    return clientPromise;
 }
 
-// Execute the connection logic immediately when the module is loaded
-// This makes sure the connection attempt starts as soon as possible.
-initializeAndConnectRedis();
-
-// Export a getter function for the connected client.
-// Other modules should call `await require('./redis').getConnectedClient()` to obtain the client.
-module.exports = {
-    getConnectedClient: initializeAndConnectRedis,
-};
+module.exports = getRedisClient;
