@@ -1,0 +1,12 @@
+{
+  "name": "aether-shield",
+  "version": "1.0.0",
+  "description": "Autonomous DevOps Self-Healing Agent Engine",
+  "main": "index.js",
+  "scripts": {
+    "start": "n8n start"
+  },
+  "dependencies": {
+    "n8n": "latest"
+  }
+}
