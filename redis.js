@@ -1,47 +1,66 @@
-const redis = require('redis');
+const { createClient } = require('redis');
 
-let redisClient;
+let client = null;
 
-async function initializeRedisConnection() {
+/**
+ * Initializes and connects to the Redis server.
+ * Ensures only one client instance is created and connected.
+ * @returns {Promise<import('redis').RedisClientType>}
+ */
+async function initializeAndConnectRedis() {
+    if (client && client.isOpen) {
+        console.log('Redis client already connected.');
+        return client;
+    }
+
     try {
-        const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+        // Ensure the client is created and assigned here, before calling .connect()
+        client = createClient({
+            url: process.env.REDIS_URL || 'redis://localhost:6379',
+            // Add other Redis client options as needed (e.g., password, db)
+        });
 
-        if (!redisClient || !redisClient.isReady) {
-            console.log('Attempting to initialize Redis client...');
-            redisClient = redis.createClient({ url: redisUrl });
+        client.on('error', (err) => {
+            console.error('Redis Client Error:', err);
+            // Optionally implement re-connection logic or application shutdown here
+        });
 
-            redisClient.on('error', (err) => {
-                console.error('Redis Client Error:', err);
-                // Optionally add logic for reconnection attempts or circuit breaking
-            });
-
-            redisClient.on('connect', () => console.log('Redis client connected.'));
-            redisClient.on('ready', () => console.log('Redis client is ready for use.'));
-            redisClient.on('end', () => console.log('Redis client disconnected.'));
-            redisClient.on('reconnecting', () => console.log('Redis client reconnecting...'));
-
-            await redisClient.connect();
-            console.log('Redis client successfully connected and initialized.');
-        } else {
-            console.log('Redis client already initialized and connected.');
-        }
-        return redisClient;
+        await client.connect();
+        console.log('Successfully connected to Redis!');
+        return client;
     } catch (error) {
-        console.error('Failed to initialize or connect to Redis:', error);
-        // Explicitly set client to null/undefined on failure to prevent stale state
-        redisClient = null; 
-        throw new Error(`Redis connection failed: ${error.message}`);
+        console.error('Failed to connect to Redis:', error);
+        // Reset client on failure to allow re-initialization attempts
+        client = null;
+        throw error; // Re-throw to propagate the connection failure
     }
 }
 
-// Export a function to get the connected client, ensuring connection on demand
+/**
+ * Returns the connected Redis client instance.
+ * Throws an error if the client is not yet initialized or connected.
+ * @returns {import('redis').RedisClientType}
+ */
+function getRedisClient() {
+    if (!client || !client.isOpen) {
+        throw new Error('Redis client is not initialized or not connected. Call initializeAndConnectRedis() first.');
+    }
+    return client;
+}
+
+/**
+ * Disconnects the Redis client.
+ */
+async function disconnectRedis() {
+    if (client && client.isOpen) {
+        await client.disconnect();
+        console.log('Redis client disconnected.');
+        client = null;
+    }
+}
+
 module.exports = {
-    getConnectedRedisClient: async () => {
-        if (!redisClient || !redisClient.isReady) {
-            await initializeRedisConnection();
-        }
-        return redisClient;
-    },
-    // Also export the connection function directly if needed for initial setup
-    initializeRedisConnection 
+    initializeAndConnectRedis,
+    getRedisClient,
+    disconnectRedis
 };
