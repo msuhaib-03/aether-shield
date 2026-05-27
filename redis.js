@@ -1,60 +1,47 @@
 const redis = require('redis');
-let client = null; // Initialize client to null to ensure it's not undefined
 
-const initializeRedisClient = async () => {
-    // Check if client exists and is already open (for redis v4+)
-    // This prevents re-initializing an active client
-    if (client && client.isOpen) {
-        return client;
-    }
+// Centralized configuration for Redis connection
+// Best practice: use environment variables for sensitive or deployment-specific data
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+
+// This promise will resolve to the connected Redis client
+// or reject if the connection fails, ensuring proper async initialization.
+const redisClientPromise = (async () => {
+    let clientInstance; // Declare clientInstance here to ensure it's in scope for the try/catch
 
     try {
-        // Configure Redis client using environment variables for flexibility and security
-        const redisConfig = {
-            url: process.env.REDIS_URL || 'redis://localhost:6379',
-            // Optionally add password, TLS, and other configurations from environment variables
-            // password: process.env.REDIS_PASSWORD,
-            // tls: process.env.REDIS_TLS === 'true' ? {} : false,
-        };
-
-        client = redis.createClient(redisConfig);
-
-        // Set up error handling for the Redis client
-        client.on('error', (err) => {
-            console.error('Aether-Shield: Redis Client Error:', err);
-            // Implement specific error handling here, e.g., metrics, alerts, graceful shutdown
+        // Initialize the Redis client. This step ensures 'clientInstance' is defined.
+        clientInstance = redis.createClient({
+            url: REDIS_URL
         });
 
-        // Log successful connection
-        client.on('connect', () => {
-            console.log('Aether-Shield: Redis client connected successfully.');
+        // Set up an error listener for the client. This will catch connection issues
+        // after the initial successful connection, or during re-connection attempts.
+        clientInstance.on('error', (err) => {
+            console.error('Aether-Shield (Redis Client): Error event caught:', err);
+            // In a self-healing system, more sophisticated error handling like
+            // automatic re-connection attempts or circuit breakers would be implemented here.
+            // For now, logging provides visibility.
         });
 
-        // Log when the client is ready to process commands
-        client.on('ready', () => {
-            console.log('Aether-Shield: Redis client is ready.');
-        });
+        // Attempt to connect to the Redis server.
+        // The 'await' keyword ensures this operation completes before proceeding.
+        // This line directly addresses the "Cannot read connect of undefined" by
+        // guaranteeing `clientInstance` is an object returned by `createClient()`
+        // before attempting to call its `connect()` method.
+        await clientInstance.connect();
 
-        // Handle connection ending gracefully
-        client.on('end', () => {
-            console.log('Aether-Shield: Redis client connection ended.');
-            // If the connection ends, clear the client instance to force re-initialization on next request
-            client = null;
-        });
-
-        // Explicitly connect the client and wait for it to be ready
-        // This ensures `client` is a valid object before `connect()` is called
-        await client.connect();
-
-        return client;
+        console.log('Aether-Shield (Redis Client): Successfully connected to Redis.');
+        return clientInstance; // Return the successfully connected client
     } catch (error) {
-        console.error('Aether-Shield: Failed to initialize Redis client:', error);
-        // Clear the client instance if initialization fails to prevent using a faulty instance
-        client = null;
-        // Re-throw the error to allow calling services to handle the connection failure
+        // Catch any errors during client creation or the initial connection attempt.
+        console.error('Aether-Shield (Redis Client): CRITICAL failure during Redis initialization or connection:', error);
+        // Re-throw the error so that consuming modules are aware of the failure
+        // and can handle it appropriately (e.g., exit, retry, fallback).
         throw error;
     }
-};
+})();
 
-// Export the async function which will return a connected Redis client instance
-module.exports = initializeRedisClient;
+// Export the promise so that other modules can 'await' it to get the connected client.
+// Example: `const redisClient = await require('./redis.js');`
+module.exports = redisClientPromise;
